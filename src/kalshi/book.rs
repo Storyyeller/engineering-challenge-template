@@ -22,8 +22,13 @@ pub struct Book {
 impl Book {
     /// Levels without a positive quantity are left out (see [`Stats::bad_levels`]).
     pub fn from_snapshot(s: &Snapshot) -> Self {
-        let levels = |l: &[(Price, Qty)]| l.iter().copied().filter(|&(_, q)| q > Qty::ZERO).collect();
-        Self { yes: levels(&s.yes), no: levels(&s.no), clock: s.clock }
+        let levels =
+            |l: &[(Price, Qty)]| l.iter().copied().filter(|&(_, q)| q > Qty::ZERO).collect();
+        Self {
+            yes: levels(&s.yes),
+            no: levels(&s.no),
+            clock: s.clock,
+        }
     }
 
     /// Apply a delta. Returns Err if a level would go negative, which means our book is out of sync
@@ -80,7 +85,10 @@ impl Book {
         for (name, a, b) in [("yes", &self.yes, &other.yes), ("no", &self.no, &other.no)] {
             let prices: std::collections::BTreeSet<_> = a.keys().chain(b.keys()).collect();
             for p in prices {
-                let (qa, qb) = (a.get(p).copied().unwrap_or_default(), b.get(p).copied().unwrap_or_default());
+                let (qa, qb) = (
+                    a.get(p).copied().unwrap_or_default(),
+                    b.get(p).copied().unwrap_or_default(),
+                );
                 if qa != qb {
                     return Some(format!("{name} {p}: {qa} vs {qb}"));
                 }
@@ -166,9 +174,19 @@ impl fmt::Display for Stats {
 pub enum Change {
     /// The book was (re)built from a snapshot: it's in sync now, and wasn't before or has changed.
     /// Read it from [`OrderbookState::markets`]. A snapshot that just confirms an in-sync book isn't a change.
-    Snapshot { ticker: String, sending_ts_ms: Option<u64> },
+    Snapshot {
+        ticker: String,
+        sending_ts_ms: Option<u64>,
+    },
     /// A level of an in-sync book now holds `qty` (zero: the level is gone).
-    Level { ticker: String, side: Side, price: Price, qty: Qty, clock: u64, ts_ms: Option<u64> },
+    Level {
+        ticker: String,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        clock: u64,
+        ts_ms: Option<u64>,
+    },
     /// The book is known to be wrong (or missing); a snapshot will be requested.
     Stale { ticker: String },
     /// Unsubscribed: the book is gone.
@@ -206,12 +224,20 @@ impl OrderbookState {
                 self.apply_snapshot(msg, frame.sending_ts_ms);
                 vec![]
             }
-            Body::OrderbookDelta { msg } if !self.ignored(&msg.market_ticker) => self.apply_delta(msg, frame.sending_ts_ms),
-            Body::Malformed { kind, market_ticker, error } => {
+            Body::OrderbookDelta { msg } if !self.ignored(&msg.market_ticker) => {
+                self.apply_delta(msg, frame.sending_ts_ms)
+            }
+            Body::Malformed {
+                kind,
+                market_ticker,
+                error,
+            } => {
                 self.stats.malformed += 1;
                 warn!("malformed {kind} message ({error})");
                 match kind.as_str() {
-                    "orderbook_snapshot" | "orderbook_delta" => self.malformed(market_ticker.as_deref()),
+                    "orderbook_snapshot" | "orderbook_delta" => {
+                        self.malformed(market_ticker.as_deref())
+                    }
                     _ => vec![],
                 }
             }
@@ -234,14 +260,21 @@ impl OrderbookState {
 
     /// The book for `ticker`, if it's in sync.
     pub fn synced_book(&self, ticker: &str) -> Option<&Book> {
-        self.markets.get(ticker).filter(|m| !m.stale).map(|m| &m.book)
+        self.markets
+            .get(ticker)
+            .filter(|m| !m.stale)
+            .map(|m| &m.book)
     }
 
     /// Candidates for a verification snapshot request (see [`OrderbookState::expect_verification`]): of
     /// the (up to) `n` markets following `after` in ticker order, wrapping around, those whose books
     /// are in sync and not already being verified. Also returns the last market looked at, to pass
     /// as `after` next time.
-    pub fn verifiable_markets(&self, after: Option<&str>, n: usize) -> (Vec<String>, Option<String>) {
+    pub fn verifiable_markets(
+        &self,
+        after: Option<&str>,
+        n: usize,
+    ) -> (Vec<String>, Option<String>) {
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let after = after.unwrap_or("");
         let looked: Vec<(&String, &MarketState)> = self
@@ -251,7 +284,11 @@ impl OrderbookState {
             .take(n)
             .collect();
         let last = looked.last().map(|(t, _)| (*t).clone());
-        let verifiable = looked.into_iter().filter(|(_, m)| !m.stale && !m.verify_pending).map(|(t, _)| t.clone()).collect();
+        let verifiable = looked
+            .into_iter()
+            .filter(|(_, m)| !m.stale && !m.verify_pending)
+            .map(|(t, _)| t.clone())
+            .collect();
         (verifiable, last)
     }
 
@@ -259,7 +296,9 @@ impl OrderbookState {
     /// [`OrderbookState::expect_markets`] says it's wanted again.
     pub fn remove_market(&mut self, ticker: &str) {
         if self.markets.remove(ticker).is_some() {
-            self.changes.push(Change::Removed { ticker: ticker.to_string() });
+            self.changes.push(Change::Removed {
+                ticker: ticker.to_string(),
+            });
         }
         self.removed.insert(ticker.to_string());
     }
@@ -299,7 +338,11 @@ impl OrderbookState {
 
     /// Markets known to be out of sync, which need a fresh snapshot.
     pub fn stale_markets(&self) -> Vec<String> {
-        self.markets.iter().filter(|(_, m)| m.stale).map(|(t, _)| t.clone()).collect()
+        self.markets
+            .iter()
+            .filter(|(_, m)| m.stale)
+            .map(|(t, _)| t.clone())
+            .collect()
     }
 
     fn check_seq(&mut self, sid: u64, seq: u64) -> Vec<String> {
@@ -317,7 +360,9 @@ impl OrderbookState {
     fn resync_all(&mut self) -> Vec<String> {
         for (ticker, m) in self.markets.iter_mut().filter(|(_, m)| !m.stale) {
             m.stale = true;
-            self.changes.push(Change::Stale { ticker: ticker.clone() });
+            self.changes.push(Change::Stale {
+                ticker: ticker.clone(),
+            });
         }
         self.markets.keys().cloned().collect()
     }
@@ -335,7 +380,9 @@ impl OrderbookState {
             Some(m) if m.stale => vec![],
             Some(m) => {
                 m.stale = true;
-                self.changes.push(Change::Stale { ticker: ticker.to_string() });
+                self.changes.push(Change::Stale {
+                    ticker: ticker.to_string(),
+                });
                 vec![ticker.to_string()]
             }
             None => self.missing(ticker),
@@ -345,17 +392,29 @@ impl OrderbookState {
     /// We need a snapshot for a market we have no book for. Track it as a stale (empty) book, so it's
     /// retried via [`OrderbookState::stale_markets`] if this request can't be made yet.
     fn missing(&mut self, ticker: &str) -> Vec<String> {
-        let state = MarketState { book: Book::default(), stale: true, verify_pending: false };
+        let state = MarketState {
+            book: Book::default(),
+            stale: true,
+            verify_pending: false,
+        };
         self.markets.insert(ticker.to_string(), state);
         vec![ticker.to_string()]
     }
 
     fn apply_snapshot(&mut self, s: &Snapshot, sending_ts_ms: Option<u64>) {
         self.stats.snapshots += 1;
-        let bad = s.yes.iter().chain(&s.no).filter(|&&(_, q)| q <= Qty::ZERO).count();
+        let bad = s
+            .yes
+            .iter()
+            .chain(&s.no)
+            .filter(|&&(_, q)| q <= Qty::ZERO)
+            .count();
         if bad > 0 {
             self.stats.bad_levels += bad as u64;
-            warn!("{} snapshot has {bad} level(s) without a positive quantity; dropped", s.market_ticker);
+            warn!(
+                "{} snapshot has {bad} level(s) without a positive quantity; dropped",
+                s.market_ticker
+            );
         }
         let book = Book::from_snapshot(s);
         // Compare levels only: the clock moves on without the book changing.
@@ -364,7 +423,10 @@ impl OrderbookState {
             .get(&s.market_ticker)
             .is_some_and(|m| !m.stale && m.book.yes == book.yes && m.book.no == book.no);
         if !unchanged {
-            self.changes.push(Change::Snapshot { ticker: s.market_ticker.clone(), sending_ts_ms });
+            self.changes.push(Change::Snapshot {
+                ticker: s.market_ticker.clone(),
+                sending_ts_ms,
+            });
         }
         if let Some(existing) = self.markets.get(&s.market_ticker) {
             if existing.verify_pending && !existing.stale {
@@ -373,16 +435,26 @@ impl OrderbookState {
                     None => self.stats.verify_ok += 1,
                     Some(diff) => {
                         self.stats.verify_mismatch += 1;
-                        warn!("{} local book differs from snapshot: {diff}", s.market_ticker);
+                        warn!(
+                            "{} local book differs from snapshot: {diff}",
+                            s.market_ticker
+                        );
                     }
                 }
             } else if !existing.stale {
                 // Server-initiated reset; Kalshi sends an empty snapshot when a market closes, for example.
                 self.stats.unsolicited_snapshots += 1;
-                debug!("unsolicited snapshot for {} replaces local book ({book})", s.market_ticker);
+                debug!(
+                    "unsolicited snapshot for {} replaces local book ({book})",
+                    s.market_ticker
+                );
             }
         }
-        let state = MarketState { book, stale: false, verify_pending: false };
+        let state = MarketState {
+            book,
+            stale: false,
+            verify_pending: false,
+        };
         self.markets.insert(s.market_ticker.clone(), state);
     }
 
@@ -390,7 +462,10 @@ impl OrderbookState {
         self.stats.deltas += 1;
         let Some(m) = self.markets.get_mut(&d.market_ticker) else {
             self.stats.deltas_for_unknown_market += 1;
-            warn!("delta for {} before its snapshot; requesting one", d.market_ticker);
+            warn!(
+                "delta for {} before its snapshot; requesting one",
+                d.market_ticker
+            );
             return self.missing(&d.market_ticker);
         };
         if m.stale {
@@ -405,10 +480,17 @@ impl OrderbookState {
             self.stats.negative_levels += 1;
             warn!("{}: {e}", d.market_ticker);
             m.stale = true;
-            self.changes.push(Change::Stale { ticker: d.market_ticker.clone() });
+            self.changes.push(Change::Stale {
+                ticker: d.market_ticker.clone(),
+            });
             return vec![d.market_ticker.clone()];
         }
-        let qty = m.book.side(d.side).get(&d.price).copied().unwrap_or(Qty::ZERO);
+        let qty = m
+            .book
+            .side(d.side)
+            .get(&d.price)
+            .copied()
+            .unwrap_or(Qty::ZERO);
         self.changes.push(Change::Level {
             ticker: d.market_ticker.clone(),
             side: d.side,
@@ -450,9 +532,22 @@ mod tests {
     #[test]
     fn snapshot_then_deltas() {
         let mut st = OrderbookState::default();
-        assert_eq!(st.handle(&snapshot(1, r#"[["0.4000","10.00"]]"#, r#"[["0.5500","5.00"]]"#)), Vec::<String>::new());
-        assert_eq!(st.handle(&delta(2, "yes", "0.4200", "3.00")), Vec::<String>::new());
-        assert_eq!(st.handle(&delta(3, "no", "0.5500", "-5.00")), Vec::<String>::new());
+        assert_eq!(
+            st.handle(&snapshot(
+                1,
+                r#"[["0.4000","10.00"]]"#,
+                r#"[["0.5500","5.00"]]"#
+            )),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            st.handle(&delta(2, "yes", "0.4200", "3.00")),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            st.handle(&delta(3, "no", "0.5500", "-5.00")),
+            Vec::<String>::new()
+        );
         let b = &st.markets["M"].book;
         assert_eq!(b.best_yes_bid(), level("0.42", "3"));
         assert_eq!(b.best_yes_ask(), None); // NO level fully removed
@@ -464,14 +559,22 @@ mod tests {
     #[test]
     fn yes_ask_from_no_bid() {
         let mut st = OrderbookState::default();
-        st.handle(&snapshot(1, "[]", r#"[["0.5500","5.00"],["0.3000","1.00"]]"#));
+        st.handle(&snapshot(
+            1,
+            "[]",
+            r#"[["0.5500","5.00"],["0.3000","1.00"]]"#,
+        ));
         assert_eq!(st.markets["M"].book.best_yes_ask(), level("0.45", "5"));
     }
 
     #[test]
     fn crossed_detection() {
         let mut st = OrderbookState::default();
-        st.handle(&snapshot(1, r#"[["0.4000","10.00"]]"#, r#"[["0.5500","5.00"]]"#));
+        st.handle(&snapshot(
+            1,
+            r#"[["0.4000","10.00"]]"#,
+            r#"[["0.5500","5.00"]]"#,
+        ));
         st.handle(&delta(2, "yes", "0.4500", "1.00")); // 0.45 + 0.55 = 1.00 -> crossed
         assert_eq!(st.stats.crossed, 1);
     }
@@ -505,7 +608,10 @@ mod tests {
         let mut st = OrderbookState::default();
         st.handle(&snapshot(1, "[]", "[]"));
         st.handle(&frame(r#"{"id":2,"sid":1,"seq":2,"type":"ok","msg":{}}"#));
-        assert_eq!(st.handle(&delta(3, "yes", "0.1000", "1.00")), Vec::<String>::new());
+        assert_eq!(
+            st.handle(&delta(3, "yes", "0.1000", "1.00")),
+            Vec::<String>::new()
+        );
         assert_eq!(st.stats.seq_gaps, 0);
     }
 
@@ -529,7 +635,10 @@ mod tests {
         let mut st = OrderbookState::default();
         st.handle(&snapshot(1, r#"[["0.4000","1.00"]]"#, "[]"));
         st.handle(&snapshot(2, "[]", "[]"));
-        assert_eq!((st.stats.unsolicited_snapshots, st.stats.verify_mismatch), (1, 0));
+        assert_eq!(
+            (st.stats.unsolicited_snapshots, st.stats.verify_mismatch),
+            (1, 0)
+        );
         assert!(st.markets["M"].book.yes.is_empty());
     }
 
@@ -552,10 +661,20 @@ mod tests {
         let mut st = OrderbookState::default();
         st.handle(&snapshot(1, r#"[["0.4000","1.00"]]"#, "[]"));
         st.remove_market("M");
-        assert_eq!(st.handle(&delta(2, "yes", "0.4000", "1.00")), Vec::<String>::new()); // no "before its snapshot" resync
+        assert_eq!(
+            st.handle(&delta(2, "yes", "0.4000", "1.00")),
+            Vec::<String>::new()
+        ); // no "before its snapshot" resync
         st.handle(&snapshot(3, "[]", "[]")); // e.g. the empty snapshot sent when a market closes
         assert!(st.markets.is_empty());
-        assert_eq!((st.stats.after_removal, st.stats.deltas_for_unknown_market, st.stats.seq_gaps), (2, 0, 0));
+        assert_eq!(
+            (
+                st.stats.after_removal,
+                st.stats.deltas_for_unknown_market,
+                st.stats.seq_gaps
+            ),
+            (2, 0, 0)
+        );
         st.expect_markets(&["M".into()]);
         st.handle(&snapshot(4, "[]", "[]"));
         assert!(st.markets.contains_key("M"));
@@ -570,9 +689,14 @@ mod tests {
         let mut st = OrderbookState::default();
         st.handle(&snapshot(1, "[]", "[]"));
         st.handle(&frame(r#"{"type":"orderbook_snapshot","sid":1,"seq":2,"msg":{"market_ticker":"N","clock":1}}"#));
-        let bad = raw(r#"{"type":"orderbook_delta","sid":1,"seq":3,"msg":{"market_ticker":"M","price_dollars":"9.0000"}}"#);
+        let bad = raw(
+            r#"{"type":"orderbook_delta","sid":1,"seq":3,"msg":{"market_ticker":"M","price_dollars":"9.0000"}}"#,
+        );
         assert_eq!(st.handle(&bad), ["M"]);
-        assert_eq!(st.handle(&delta(4, "yes", "0.1000", "1.00")), Vec::<String>::new()); // seq advanced past the bad one
+        assert_eq!(
+            st.handle(&delta(4, "yes", "0.1000", "1.00")),
+            Vec::<String>::new()
+        ); // seq advanced past the bad one
         assert_eq!((st.stats.malformed, st.stats.seq_gaps), (1, 0));
         assert!(st.markets["M"].stale && !st.markets["N"].stale);
         // Without a ticker, every market on the subscription is suspect.
@@ -583,7 +707,11 @@ mod tests {
     #[test]
     fn non_positive_snapshot_levels_dropped() {
         let mut st = OrderbookState::default();
-        st.handle(&snapshot(1, r#"[["0.4000","1.00"],["0.3000","0.00"]]"#, r#"[["0.2000","-1.00"]]"#));
+        st.handle(&snapshot(
+            1,
+            r#"[["0.4000","1.00"],["0.3000","0.00"]]"#,
+            r#"[["0.2000","-1.00"]]"#,
+        ));
         let b = &st.markets["M"].book;
         assert_eq!((b.yes.len(), b.no.len(), st.stats.bad_levels), (1, 0, 2));
     }
@@ -606,8 +734,13 @@ mod tests {
         let mut st = OrderbookState::default();
         st.handle(&snapshot(1, "[]", "[]"));
         st.handle(&frame(r#"{"type":"market_lifecycle_v2","sid":1,"seq":7,"msg":{"market_ticker":"X","event_type":"created"}}"#));
-        st.handle(&frame(r#"{"type":"event_lifecycle","sid":1,"seq":9,"msg":{"event_ticker":"E"}}"#));
-        assert_eq!(st.handle(&delta(2, "yes", "0.1000", "1.00")), Vec::<String>::new());
+        st.handle(&frame(
+            r#"{"type":"event_lifecycle","sid":1,"seq":9,"msg":{"event_ticker":"E"}}"#,
+        ));
+        assert_eq!(
+            st.handle(&delta(2, "yes", "0.1000", "1.00")),
+            Vec::<String>::new()
+        );
         assert_eq!(st.stats.seq_gaps, 0);
     }
 
@@ -636,6 +769,9 @@ mod tests {
         assert_eq!(r, ["M"]);
         // Remembered as stale, so the request is retried if it can't be sent now.
         assert_eq!(st.stale_markets(), vec!["M".to_string()]);
-        assert_eq!(st.handle(&delta(2, "yes", "0.4000", "1.00")), Vec::<String>::new());
+        assert_eq!(
+            st.handle(&delta(2, "yes", "0.4000", "1.00")),
+            Vec::<String>::new()
+        );
     }
 }

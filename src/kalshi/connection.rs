@@ -23,6 +23,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
 
 use crate::collector::{Event, SourceEvent, SourceId};
+use crate::kalshi::NEVER;
 use crate::kalshi::auth::{AuthKey, WS_PATH};
 use crate::kalshi::book::Change;
 use crate::kalshi::convert;
@@ -30,7 +31,6 @@ use crate::kalshi::discovery::{Listing, Universe};
 use crate::kalshi::messages::Command;
 use crate::kalshi::session::Session;
 use crate::kalshi::subscriptions::Effects;
-use crate::kalshi::NEVER;
 
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
@@ -98,7 +98,11 @@ fn now_ms(now: DateTime<Utc>) -> u64 {
 
 /// An interval that ticks every `period`, starting `first` from now (never, if `period` is zero).
 fn interval(first: Duration, period: Duration) -> Interval {
-    let (first, period) = if period.is_zero() { (NEVER, NEVER) } else { (first, period) };
+    let (first, period) = if period.is_zero() {
+        (NEVER, NEVER)
+    } else {
+        (first, period)
+    };
     let mut i = tokio::time::interval_at(Instant::now() + first, period);
     i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     i
@@ -109,7 +113,9 @@ fn interval(first: Duration, period: Duration) -> Interval {
 fn jittered(d: Duration) -> Duration {
     use std::hash::{BuildHasher, Hasher};
     // Each RandomState has fresh random keys, which is all the randomness this needs.
-    let r = std::collections::hash_map::RandomState::new().build_hasher().finish();
+    let r = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
     d.mul_f64(0.5 + r as f64 / u64::MAX as f64)
 }
 
@@ -125,7 +131,9 @@ where
     S: Sink<Message, Error = tungstenite::Error> + Unpin,
 {
     for m in msgs {
-        timeout(IO_TIMEOUT, write.send(m)).await.map_err(|_| anyhow!("websocket send timed out"))??;
+        timeout(IO_TIMEOUT, write.send(m))
+            .await
+            .map_err(|_| anyhow!("websocket send timed out"))??;
     }
     Ok(())
 }
@@ -134,7 +142,9 @@ async fn flush<S>(write: &mut S) -> Result<()>
 where
     S: Sink<Message, Error = tungstenite::Error> + Unpin,
 {
-    timeout(IO_TIMEOUT, write.flush()).await.map_err(|_| anyhow!("websocket flush timed out"))??;
+    timeout(IO_TIMEOUT, write.flush())
+        .await
+        .map_err(|_| anyhow!("websocket flush timed out"))??;
     Ok(())
 }
 
@@ -160,8 +170,14 @@ async fn connect(cfg: &Config) -> Result<Result<WsStream>> {
     let mut request = url.as_str().into_client_request()?;
     let headers = request.headers_mut();
     headers.insert("KALSHI-ACCESS-KEY", HeaderValue::from_str(&cfg.key_id)?);
-    headers.insert("KALSHI-ACCESS-SIGNATURE", HeaderValue::from_str(&signature)?);
-    headers.insert("KALSHI-ACCESS-TIMESTAMP", HeaderValue::from_str(&timestamp_ms)?);
+    headers.insert(
+        "KALSHI-ACCESS-SIGNATURE",
+        HeaderValue::from_str(&signature)?,
+    );
+    headers.insert(
+        "KALSHI-ACCESS-TIMESTAMP",
+        HeaderValue::from_str(&timestamp_ms)?,
+    );
 
     info!("connecting to {url}");
     match timeout(IO_TIMEOUT, tokio_tungstenite::connect_async(request)).await {
@@ -170,13 +186,17 @@ async fn connect(cfg: &Config) -> Result<Result<WsStream>> {
             info!("connected: HTTP {}", response.status());
             Ok(Ok(ws))
         }
-        Ok(Err(tungstenite::Error::Http(response))) if matches!(response.status().as_u16(), 401 | 403) => {
+        Ok(Err(tungstenite::Error::Http(response)))
+            if matches!(response.status().as_u16(), 401 | 403) =>
+        {
             bail!(
                 "websocket handshake rejected: HTTP {} (check key ID / key file / KALSHI_ENV / clock)",
                 response.status()
             )
         }
-        Ok(Err(e)) => Ok(Err(anyhow::Error::new(e).context("websocket handshake failed"))),
+        Ok(Err(e)) => Ok(Err(
+            anyhow::Error::new(e).context("websocket handshake failed")
+        )),
     }
 }
 
@@ -211,11 +231,16 @@ pub async fn run(cfg: Arc<Config>, worker: Worker, mut links: Links) -> Result<(
                     let _ = links.rediscover.send(());
                 }
                 first = false;
-                let end = run_connection(&cfg, &worker, &mut links, &mut removed, recycle, ws).await;
+                let end =
+                    run_connection(&cfg, &worker, &mut links, &mut removed, recycle, ws).await;
                 // This connection's books are gone. (Not worth failing over when everything's
                 // shutting down.)
                 if !matches!(end, Ok(End::Shutdown)) {
-                    let disconnected = SourceEvent { source: worker.source, received_at: Utc::now(), event: Event::Disconnected };
+                    let disconnected = SourceEvent {
+                        source: worker.source,
+                        received_at: Utc::now(),
+                        event: Event::Disconnected,
+                    };
                     send_event(&links.events, disconnected)?;
                 }
                 end?
@@ -248,33 +273,67 @@ pub async fn run(cfg: Arc<Config>, worker: Worker, mut links: Links) -> Result<(
 
 /// The listed markets this connection should follow. Listings are already filtered, so only the
 /// shard needs checking.
-fn shard_markets(listed: &BTreeSet<String>, universe: &Universe, removed: &BTreeSet<String>) -> Vec<String> {
-    listed.iter().filter(|t| universe.shard.contains(t) && !removed.contains(*t)).cloned().collect()
+fn shard_markets(
+    listed: &BTreeSet<String>,
+    universe: &Universe,
+    removed: &BTreeSet<String>,
+) -> Vec<String> {
+    listed
+        .iter()
+        .filter(|t| universe.shard.contains(t) && !removed.contains(*t))
+        .cloned()
+        .collect()
 }
 
 /// Pass an event to the publisher. The publisher only stops before the connections if it failed
 /// (e.g. writing the output), and then there's no point carrying on.
 fn send_event(events: &Sender<SourceEvent>, event: SourceEvent) -> Result<()> {
-    events.send(event).map_err(|_| anyhow!("the publisher has stopped"))
+    events
+        .send(event)
+        .map_err(|_| anyhow!("the publisher has stopped"))
 }
 
 /// Report book changes to the publisher.
-fn publish(session: &mut Session, source: SourceId, received_at: DateTime<Utc>, events: &Sender<SourceEvent>) -> Result<()> {
+fn publish(
+    session: &mut Session,
+    source: SourceId,
+    received_at: DateTime<Utc>,
+    events: &Sender<SourceEvent>,
+) -> Result<()> {
     for change in session.take_changes() {
         let event = match change {
-            Change::Snapshot { ticker, sending_ts_ms } => {
+            Change::Snapshot {
+                ticker,
+                sending_ts_ms,
+            } => {
                 // Gone again already if, say, it was unsubscribed by the same message.
-                let Some(book) = session.synced_book(&ticker) else { continue };
+                let Some(book) = session.synced_book(&ticker) else {
+                    continue;
+                };
                 convert::book_event(ticker, book, sending_ts_ms.and_then(convert::from_ms))
             }
-            Change::Level { ticker, side, price, qty, clock, ts_ms } => {
+            Change::Level {
+                ticker,
+                side,
+                price,
+                qty,
+                clock,
+                ts_ms,
+            } => {
                 let exchange_ts = ts_ms.and_then(convert::from_ms).unwrap_or(received_at);
                 convert::level_event(ticker, side, price, qty, clock, exchange_ts)
             }
             Change::Stale { ticker } => Event::Stale { symbol: ticker },
             Change::Removed { ticker } => Event::Removed { symbol: ticker },
         };
-        send_event(events, SourceEvent { source, received_at, event })?;
+        send_event(
+            events,
+            SourceEvent {
+                source,
+                received_at,
+                event,
+            },
+        )?;
     }
     Ok(())
 }
@@ -339,7 +398,11 @@ async fn run_connection(
 
     // The lifecycle subscription goes first, so markets created after the listing we start from
     // aren't missed.
-    let tickers = shard_markets(&links.markets.borrow_and_update().markets, &worker.universe, removed);
+    let tickers = shard_markets(
+        &links.markets.borrow_and_update().markets,
+        &worker.universe,
+        removed,
+    );
     let start = session.start(tickers, now_ms(Utc::now()));
     if let Err(e) = send_cmds(&mut write, &mut session, start).await {
         return Ok(End::Lost(e));
@@ -377,7 +440,12 @@ async fn run_connection(
             break end;
         }
     };
-    publish(&mut conn.session, worker.source, Utc::now(), &conn.links.events)?;
+    publish(
+        &mut conn.session,
+        worker.source,
+        Utc::now(),
+        &conn.links.events,
+    )?;
     info!("{}", conn.session.summary());
     Ok(end)
 }
@@ -403,23 +471,34 @@ impl Connection<'_> {
     }
 
     /// Act on one input. Errors are fatal; `Break` ends the connection.
-    async fn handle(&mut self, input: Input, received_at: DateTime<Utc>) -> Result<ControlFlow<End>> {
+    async fn handle(
+        &mut self,
+        input: Input,
+        received_at: DateTime<Utc>,
+    ) -> Result<ControlFlow<End>> {
         let now_ms = now_ms(received_at);
         let fx: Effects = match input {
             Input::Shutdown => {
                 self.close().await;
                 return Ok(ControlFlow::Break(End::Shutdown));
             }
-            Input::Idle => return Ok(lost(anyhow!("nothing received for {:?}", self.cfg.idle_timeout))),
+            Input::Idle => {
+                return Ok(lost(anyhow!(
+                    "nothing received for {:?}",
+                    self.cfg.idle_timeout
+                )));
+            }
             Input::Recycle => {
                 self.close().await;
                 return Ok(ControlFlow::Break(End::Recycled));
             }
             Input::Ping => {
-                return Ok(match send_all(&mut self.write, [Message::Ping(Default::default())]).await {
-                    Ok(()) => ControlFlow::Continue(()),
-                    Err(e) => lost(e),
-                });
+                return Ok(
+                    match send_all(&mut self.write, [Message::Ping(Default::default())]).await {
+                        Ok(()) => ControlFlow::Continue(()),
+                        Err(e) => lost(e),
+                    },
+                );
             }
             Input::Tick => self.session.on_tick(now_ms),
             Input::Status => {
@@ -449,11 +528,20 @@ impl Connection<'_> {
                     Some(book) => convert::book_event(symbol, book, None),
                     None => Event::Stale { symbol },
                 };
-                send_event(&self.links.events, SourceEvent { source: self.worker.source, received_at, event })?;
+                send_event(
+                    &self.links.events,
+                    SourceEvent {
+                        source: self.worker.source,
+                        received_at,
+                        event,
+                    },
+                )?;
                 return Ok(ControlFlow::Continue(()));
             }
             Input::Frame(frame) => {
-                self.idle.as_mut().reset(Instant::now() + self.cfg.idle_timeout);
+                self.idle
+                    .as_mut()
+                    .reset(Instant::now() + self.cfg.idle_timeout);
                 match self.on_frame(frame).await {
                     ControlFlow::Break(end) => return Ok(ControlFlow::Break(end)),
                     ControlFlow::Continue(None) => return Ok(ControlFlow::Continue(())),
@@ -465,7 +553,10 @@ impl Connection<'_> {
     }
 
     /// Handle a websocket frame at the protocol level. Returns the JSON message it carries, if any.
-    async fn on_frame(&mut self, frame: Option<Result<Message, tungstenite::Error>>) -> ControlFlow<End, Option<serde_json::Value>> {
+    async fn on_frame(
+        &mut self,
+        frame: Option<Result<Message, tungstenite::Error>>,
+    ) -> ControlFlow<End, Option<serde_json::Value>> {
         let text = match frame {
             None => return lost(anyhow!("stream ended")),
             Some(Err(e)) => return lost(anyhow::Error::new(e).context("websocket error")),
@@ -504,10 +595,20 @@ impl Connection<'_> {
         }
         // Report changes before sending, which can take a while if the socket is backed up: the
         // publisher only waits a moment for each event.
-        publish(&mut self.session, self.worker.source, received_at, &self.links.events)?;
+        publish(
+            &mut self.session,
+            self.worker.source,
+            received_at,
+            &self.links.events,
+        )?;
         let sent = send_cmds(&mut self.write, &mut self.session, fx.send).await;
         // Sending can change books too (unsubscribing drops them). These count even if a send failed.
-        publish(&mut self.session, self.worker.source, received_at, &self.links.events)?;
+        publish(
+            &mut self.session,
+            self.worker.source,
+            received_at,
+            &self.links.events,
+        )?;
         Ok(match sent {
             Ok(()) => ControlFlow::Continue(()),
             Err(e) => lost(e),
@@ -516,7 +617,11 @@ impl Connection<'_> {
 
     /// Say goodbye to the server, briefly; the connection is being dropped either way.
     async fn close(&mut self) {
-        let _ = timeout(Duration::from_secs(1), self.write.send(Message::Close(None))).await;
+        let _ = timeout(
+            Duration::from_secs(1),
+            self.write.send(Message::Close(None)),
+        )
+        .await;
     }
 }
 

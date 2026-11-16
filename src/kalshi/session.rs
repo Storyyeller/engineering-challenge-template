@@ -34,7 +34,11 @@ impl Session {
     }
 
     /// Initial subscriptions.
-    pub fn start(&mut self, tickers: impl IntoIterator<Item = String>, now_ms: u64) -> Vec<Command> {
+    pub fn start(
+        &mut self,
+        tickers: impl IntoIterator<Item = String>,
+        now_ms: u64,
+    ) -> Vec<Command> {
         self.subs.start(tickers, now_ms)
     }
 
@@ -65,8 +69,10 @@ impl Session {
         // Subscription acks, command responses, errors: rare and worth seeing. Lifecycle messages cover
         // the whole exchange, so only the relevant ones are logged (by `subs`).
         // Malformed messages are reported by the book.
-        if !matches!(frame.body, Body::OrderbookSnapshot { .. } | Body::OrderbookDelta { .. } | Body::Malformed { .. })
-            && !frame.body.is_lifecycle()
+        if !matches!(
+            frame.body,
+            Body::OrderbookSnapshot { .. } | Body::OrderbookDelta { .. } | Body::Malformed { .. }
+        ) && !frame.body.is_lifecycle()
         {
             debug!("{raw}");
         }
@@ -88,8 +94,12 @@ impl Session {
         let mut wanted = self.books.stale_markets();
         // A subscribed market's first snapshot normally follows within moments; one still missing a whole
         // tick later was lost.
-        let missing: BTreeSet<String> =
-            self.subs.subscribed().filter(|t| !self.books.markets.contains_key(*t)).cloned().collect();
+        let missing: BTreeSet<String> = self
+            .subs
+            .subscribed()
+            .filter(|t| !self.books.markets.contains_key(*t))
+            .cloned()
+            .collect();
         let overdue: Vec<String> = missing.intersection(&self.missing).cloned().collect();
         if !overdue.is_empty() {
             warn!("no snapshot received for {overdue:?}; requesting one");
@@ -106,13 +116,19 @@ impl Session {
     /// waiting.
     pub fn on_verify(&mut self, now_ms: u64, slices: usize) -> Vec<Command> {
         let n = self.books.markets.len().div_ceil(slices.max(1));
-        let (tickers, last) = self.books.verifiable_markets(self.verify_after.as_deref(), n);
+        let (tickers, last) = self
+            .books
+            .verifiable_markets(self.verify_after.as_deref(), n);
         self.verify_after = last;
         self.subs.snapshot_request(&tickers, now_ms)
     }
 
     /// REST discovery listed these markets (possibly only some of them, while listing is in progress).
-    pub fn on_discovered(&mut self, markets: impl IntoIterator<Item = String>, now_ms: u64) -> Vec<Command> {
+    pub fn on_discovered(
+        &mut self,
+        markets: impl IntoIterator<Item = String>,
+        now_ms: u64,
+    ) -> Vec<Command> {
         self.subs.add_markets(markets, now_ms)
     }
 
@@ -137,7 +153,10 @@ impl Session {
     pub fn summary(&self) -> String {
         let (subscribed, wanted) = self.subs.counts();
         let s = &self.subs;
-        format!("markets={subscribed}/{wanted} {} commands={:?} command_errors={:?}", self.books.stats, s.commands, s.command_errors)
+        format!(
+            "markets={subscribed}/{wanted} {} commands={:?} command_errors={:?}",
+            self.books.stats, s.commands, s.command_errors
+        )
     }
 
     /// Apply what `Subscriptions` decided to the books, and pass it on.
@@ -169,7 +188,11 @@ pub(crate) mod tests {
         /// Session on `markets`, with both subscriptions confirmed (lifecycle sid 1, orderbook sid 2)
         /// and a snapshot for each market.
         pub(crate) fn started(markets: &[&str]) -> Self {
-            let mut h = Self { session: Session::new(Universe::filtered(vec![])), now: 0, seq: 0 };
+            let mut h = Self {
+                session: Session::new(Universe::filtered(vec![])),
+                now: 0,
+                seq: 0,
+            };
             let cmds = h.session.start(markets.iter().map(|m| m.to_string()), 0);
             h.send(cmds);
             h.msg(json!({"id": 1, "type": "subscribed", "msg": {"channel": "market_lifecycle_v2", "sid": 1}}), 0);
@@ -246,7 +269,14 @@ pub(crate) mod tests {
         assert!(h.verify(1).send.is_empty()); // already being verified
         h.snapshot("A", "1.00", 2);
         h.snapshot("B", "9.00", 2);
-        assert_eq!((h.stats().verify_ok, h.stats().verify_mismatch, h.stats().unsolicited_snapshots), (1, 1, 0));
+        assert_eq!(
+            (
+                h.stats().verify_ok,
+                h.stats().verify_mismatch,
+                h.stats().unsolicited_snapshots
+            ),
+            (1, 1, 0)
+        );
         assert_eq!(h.session.subs.commands["get_snapshot"], 1);
     }
 
@@ -272,14 +302,21 @@ pub(crate) mod tests {
         let cmds = h.session.on_listing(&listed, 2);
         assert_eq!(cmds[0].action(), Some(Action::DeleteMarkets));
         assert!(!h.session.books.markets.contains_key("B"));
-        assert!(h.session.take_changes().contains(&Change::Removed { ticker: "B".into() }));
+        assert!(
+            h.session
+                .take_changes()
+                .contains(&Change::Removed { ticker: "B".into() })
+        );
     }
 
     #[test]
     fn skipped_markets_are_not_left_waiting_for_verification() {
         let mut h = Harness::started(&["A"]);
         let id = h.verify(1).send[0].id;
-        h.msg(json!({"id": id, "type": "error", "msg": {"code": 1, "msg": "x"}}), 1);
+        h.msg(
+            json!({"id": id, "type": "error", "msg": {"code": 1, "msg": "x"}}),
+            1,
+        );
         assert!(!h.session.books.markets["A"].verify_pending);
         assert_eq!(h.session.subs.command_errors["get_snapshot"], 1);
         // Backing off: no request, and not marked as pending, so a later round still verifies it.
@@ -307,14 +344,20 @@ pub(crate) mod tests {
         assert!(h.session.books.markets["A"].stale);
         h.snapshot("A", "1.00", 2);
         assert!(!h.session.books.markets["A"].stale);
-        assert_eq!((h.stats().verify_ok, h.stats().unsolicited_snapshots), (0, 0));
+        assert_eq!(
+            (h.stats().verify_ok, h.stats().unsolicited_snapshots),
+            (0, 0)
+        );
     }
 
     #[test]
     fn stale_markets_retried_on_tick() {
         let mut h = Harness::started(&["A"]);
         let id = h.delta("A", "-5.00", 1).send[0].id;
-        h.msg(json!({"id": id, "type": "error", "msg": {"code": 1, "msg": "x"}}), 1);
+        h.msg(
+            json!({"id": id, "type": "error", "msg": {"code": 1, "msg": "x"}}),
+            1,
+        );
         assert!(h.tick(2).send.is_empty()); // backing off
         assert_eq!(tickers(&h.tick(1 + 10_000)), vec![vec!["A".to_string()]]);
     }
@@ -323,8 +366,11 @@ pub(crate) mod tests {
     fn settled_market_is_removed() {
         let mut h = Harness::started(&["A", "B"]);
         let seq = 1; // lifecycle sid has its own seq
-        let out = h.msg(json!({"type": "market_lifecycle_v2", "sid": 1, "seq": seq,
-                               "msg": {"market_ticker": "A", "event_type": "settled"}}), 1);
+        let out = h.msg(
+            json!({"type": "market_lifecycle_v2", "sid": 1, "seq": seq,
+                               "msg": {"market_ticker": "A", "event_type": "settled"}}),
+            1,
+        );
         assert_eq!(out.removed, vec!["A".to_string()]);
         assert_eq!(out.send[0].action(), Some(Action::DeleteMarkets));
         assert!(!h.session.books.markets.contains_key("A"));
@@ -370,6 +416,9 @@ pub(crate) mod tests {
         assert!(h.delta("A", "1.00", 2).send.is_empty());
         h.snapshot("A", "3.00", 3);
         assert!(!h.session.books.markets.contains_key("A"));
-        assert_eq!((h.stats().after_removal, h.stats().deltas_for_unknown_market), (2, 0));
+        assert_eq!(
+            (h.stats().after_removal, h.stats().deltas_for_unknown_market),
+            (2, 0)
+        );
     }
 }

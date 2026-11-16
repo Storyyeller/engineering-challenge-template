@@ -94,7 +94,12 @@ impl fmt::Display for PublisherStats {
         write!(
             f,
             "published snapshots={} updates={} failovers={} lag_switches={} unfollowed={} late={}",
-            self.snapshots, self.updates, self.failovers, self.lag_switches, self.unfollowed, self.late
+            self.snapshots,
+            self.updates,
+            self.failovers,
+            self.lag_switches,
+            self.unfollowed,
+            self.late
         )
     }
 }
@@ -148,12 +153,18 @@ impl PublishedBook {
                 .bids
                 .iter()
                 .rev()
-                .map(|(&price_level, &quantity)| SnapshotBidsEntryDomain { price_level, quantity })
+                .map(|(&price_level, &quantity)| SnapshotBidsEntryDomain {
+                    price_level,
+                    quantity,
+                })
                 .collect(),
             asks: self
                 .asks
                 .iter()
-                .map(|(&price_level, &quantity)| SnapshotAsksEntryDomain { price_level, quantity })
+                .map(|(&price_level, &quantity)| SnapshotAsksEntryDomain {
+                    price_level,
+                    quantity,
+                })
                 .collect(),
             symbol: symbol.to_owned(),
         }
@@ -225,7 +236,12 @@ impl Selector {
         let src = match self.sources.iter().position(|s| s.id == source) {
             Some(i) => &mut self.sources[i],
             None => {
-                self.sources.push(SourceState { id: source, synced: false, clock: 0, exchange_ts: None });
+                self.sources.push(SourceState {
+                    id: source,
+                    synced: false,
+                    clock: 0,
+                    exchange_ts: None,
+                });
                 self.sources.last_mut().unwrap()
             }
         };
@@ -247,7 +263,9 @@ impl Selector {
 
     /// A level of `source`'s book changed. Returns whether to publish the change.
     fn on_level(&mut self, source: SourceId, clock: u64, exchange_ts: DateTime<Utc>) -> bool {
-        let Some(src) = self.source_mut(source).filter(|s| s.synced) else { return false };
+        let Some(src) = self.source_mut(source).filter(|s| s.synced) else {
+            return false;
+        };
         // Never backwards: a stray older update mustn't make the source look behind.
         src.clock = src.clock.max(clock);
         src.exchange_ts = Some(exchange_ts);
@@ -282,16 +300,22 @@ impl Selector {
             }
             None => {
                 self.awaiting_book = false;
-                if self.primary.take().is_some() { Switch::Unfollowed } else { Switch::Unchanged }
+                if self.primary.take().is_some() {
+                    Switch::Unfollowed
+                } else {
+                    Switch::Unchanged
+                }
             }
         }
     }
 
     /// Update `behind_since`: whether some other source is ahead of the one we follow.
     fn refresh_lag(&mut self, now: DateTime<Utc>) {
-        let behind = self
-            .following()
-            .is_some_and(|p| self.sources.iter().any(|s| s.synced && s.id != p.id && s.clock > p.clock));
+        let behind = self.following().is_some_and(|p| {
+            self.sources
+                .iter()
+                .any(|s| s.synced && s.id != p.id && s.clock > p.clock)
+        });
         if !behind {
             self.behind_since = None;
         } else if self.behind_since.is_none() {
@@ -335,7 +359,10 @@ impl Publisher {
 
     /// Number of symbols whose primary's book is in sync and published.
     pub fn followed(&self) -> usize {
-        self.symbols.values().filter(|s| s.selector.following().is_some()).count()
+        self.symbols
+            .values()
+            .filter(|s| s.selector.following().is_some())
+            .count()
     }
 
     /// Requests to deliver: each source should reply with an [`Event::Book`] of its book for the
@@ -348,9 +375,17 @@ impl Publisher {
     pub fn handle(&mut self, ev: SourceEvent, out: &mut impl Output) -> Result<()> {
         let (source, received_at) = (ev.source, ev.received_at);
         let symbol = match ev.event {
-            Event::Book { symbol, bids, asks, clock, exchange_ts } => {
+            Event::Book {
+                symbol,
+                bids,
+                asks,
+                clock,
+                exchange_ts,
+            } => {
                 let sym = self.symbols.entry(symbol.clone()).or_default();
-                let (publish, exchange_ts) = sym.selector.on_book(source, clock, exchange_ts, received_at);
+                let (publish, exchange_ts) =
+                    sym.selector
+                        .on_book(source, clock, exchange_ts, received_at);
                 if publish {
                     sym.book.replace(&bids, &asks, exchange_ts);
                     out.snapshot(&sym.book.snapshot(&symbol, received_at))?;
@@ -358,8 +393,17 @@ impl Publisher {
                 }
                 symbol
             }
-            Event::Level { symbol, side, price, qty, clock, exchange_ts } => {
-                let Some(sym) = self.symbols.get_mut(&symbol) else { return Ok(()) };
+            Event::Level {
+                symbol,
+                side,
+                price,
+                qty,
+                clock,
+                exchange_ts,
+            } => {
+                let Some(sym) = self.symbols.get_mut(&symbol) else {
+                    return Ok(());
+                };
                 if sym.selector.on_level(source, clock, exchange_ts) {
                     sym.book.set_level(side, price, qty, exchange_ts);
                     out.update(&PriceLevelUpdateDomain {
@@ -375,7 +419,9 @@ impl Publisher {
                 symbol
             }
             Event::Stale { symbol } => {
-                let Some(sym) = self.symbols.get_mut(&symbol) else { return Ok(()) };
+                let Some(sym) = self.symbols.get_mut(&symbol) else {
+                    return Ok(());
+                };
                 if let Some(switch) = sym.selector.on_stale(source) {
                     self.switched(&symbol, switch, Reason::Failover);
                 }
@@ -423,8 +469,12 @@ impl Publisher {
     /// Publish a snapshot of every symbol whose book is in sync. A symbol that's switching source
     /// isn't included: its snapshot is published when the new source's book arrives.
     pub fn snapshot_all(&mut self, now: DateTime<Utc>, out: &mut impl Output) -> Result<()> {
-        let mut symbols: Vec<&String> =
-            self.symbols.iter().filter(|(_, s)| s.selector.following().is_some()).map(|(t, _)| t).collect();
+        let mut symbols: Vec<&String> = self
+            .symbols
+            .iter()
+            .filter(|(_, s)| s.selector.following().is_some())
+            .map(|(t, _)| t)
+            .collect();
         symbols.sort(); // deterministic output
         for symbol in symbols {
             out.snapshot(&self.symbols[symbol].book.snapshot(symbol, now))?;
@@ -433,8 +483,16 @@ impl Publisher {
         Ok(())
     }
 
-    fn remove_source(&mut self, symbol: &str, source: SourceId, now: DateTime<Utc>, reason: Reason) {
-        let Some(sym) = self.symbols.get_mut(symbol) else { return };
+    fn remove_source(
+        &mut self,
+        symbol: &str,
+        source: SourceId,
+        now: DateTime<Utc>,
+        reason: Reason,
+    ) {
+        let Some(sym) = self.symbols.get_mut(symbol) else {
+            return;
+        };
         let switch = sym.selector.remove(source);
         if sym.selector.sources.is_empty() {
             self.symbols.remove(symbol);
@@ -465,7 +523,9 @@ impl Publisher {
 
     /// Update whether `symbol`'s followed source is behind, and the set of those that are.
     fn track_lag(&mut self, symbol: &str, now: DateTime<Utc>) {
-        let Some(sym) = self.symbols.get_mut(symbol) else { return };
+        let Some(sym) = self.symbols.get_mut(symbol) else {
+            return;
+        };
         sym.selector.refresh_lag(now);
         if sym.selector.behind_since.is_some() {
             if !self.behind.contains(symbol) {
@@ -480,7 +540,8 @@ impl Publisher {
 /// The next whole minute after `now`.
 fn next_minute(now: DateTime<Utc>) -> DateTime<Utc> {
     let minute = 60_000_000;
-    DateTime::from_timestamp_micros((now.timestamp_micros().div_euclid(minute) + 1) * minute).unwrap_or(now)
+    DateTime::from_timestamp_micros((now.timestamp_micros().div_euclid(minute) + 1) * minute)
+        .unwrap_or(now)
 }
 
 /// An event waiting to be released, ordered by (time, arrival).
@@ -522,7 +583,10 @@ impl Reorder {
         *last = at;
         self.arrivals += 1;
         let on_time = event.received_at >= self.released;
-        self.heap.push(Reverse(Queued { key: (at, self.arrivals), event }));
+        self.heap.push(Reverse(Queued {
+            key: (at, self.arrivals),
+            event,
+        }));
         on_time
     }
 
@@ -557,8 +621,13 @@ pub fn run_publisher(
     let mut done = false;
     let result = loop {
         // Wake for the next event due out, the next snapshot, or the next lag check.
-        let until = |t: DateTime<Utc>| (t + REORDER_WINDOW - Utc::now()).to_std().unwrap_or_default();
-        let mut wait = until(next_snapshot).min(next_lag_check.saturating_duration_since(Instant::now()));
+        let until = |t: DateTime<Utc>| {
+            (t + REORDER_WINDOW - Utc::now())
+                .to_std()
+                .unwrap_or_default()
+        };
+        let mut wait =
+            until(next_snapshot).min(next_lag_check.saturating_duration_since(Instant::now()));
         if let Some(at) = queue.next_at() {
             wait = wait.min(until(at));
         }
@@ -582,7 +651,11 @@ pub fn run_publisher(
         }
 
         // Everything received up to here can go out (everything, once the sources are gone).
-        let horizon = if done { DateTime::<Utc>::MAX_UTC } else { Utc::now() - REORDER_WINDOW };
+        let horizon = if done {
+            DateTime::<Utc>::MAX_UTC
+        } else {
+            Utc::now() - REORDER_WINDOW
+        };
         let step = (|| {
             loop {
                 let next = queue.next_at().filter(|&at| at <= horizon);
@@ -631,8 +704,20 @@ mod tests {
             received_at: t(ms),
             event: Event::Book {
                 symbol: "M".into(),
-                bids: vec![Level { price: bid.0, qty: bid.1 }],
-                asks: vec![Level { price: 600_000, qty: 1_000_000 }, Level { price: 700_000, qty: 2_000_000 }],
+                bids: vec![Level {
+                    price: bid.0,
+                    qty: bid.1,
+                }],
+                asks: vec![
+                    Level {
+                        price: 600_000,
+                        qty: 1_000_000,
+                    },
+                    Level {
+                        price: 700_000,
+                        qty: 2_000_000,
+                    },
+                ],
                 clock,
                 exchange_ts: Some(t(ms - 1)),
             },
@@ -655,7 +740,11 @@ mod tests {
     }
 
     fn ev(source: SourceId, event: Event) -> SourceEvent {
-        SourceEvent { source, received_at: t(0), event }
+        SourceEvent {
+            source,
+            received_at: t(0),
+            event,
+        }
     }
 
     fn stale(source: SourceId) -> SourceEvent {
@@ -669,7 +758,10 @@ mod tests {
 
     impl H {
         fn new() -> Self {
-            Self { p: Publisher::default(), out: vec![] }
+            Self {
+                p: Publisher::default(),
+                out: vec![],
+            }
         }
 
         fn send(&mut self, mut e: SourceEvent, now_ms: i64) {
@@ -683,12 +775,19 @@ mod tests {
         }
 
         fn bids(&self) -> Vec<(i64, i64)> {
-            self.p.symbols["M"].book.bids.iter().map(|(&p, &q)| (p, q)).collect()
+            self.p.symbols["M"]
+                .book
+                .bids
+                .iter()
+                .map(|(&p, &q)| (p, q))
+                .collect()
         }
     }
 
     fn snapshot_bids(m: &Message) -> Vec<(i64, i64)> {
-        let Message::Snapshot(s) = m else { panic!("expected snapshot, got {m:?}") };
+        let Message::Snapshot(s) = m else {
+            panic!("expected snapshot, got {m:?}")
+        };
         s.bids.iter().map(|l| (l.price_level, l.quantity)).collect()
     }
 
@@ -699,17 +798,30 @@ mod tests {
         h.send(book(1, (400_000, 5), 10, 1), 1);
         let out = h.take();
         assert_eq!(out.len(), 1);
-        let Message::Snapshot(s) = &out[0] else { panic!() };
-        assert_eq!((s.symbol.as_str(), s.received_at, s.exchange_timestamp), ("M", t(0), t(-1)));
+        let Message::Snapshot(s) = &out[0] else {
+            panic!()
+        };
+        assert_eq!(
+            (s.symbol.as_str(), s.received_at, s.exchange_timestamp),
+            ("M", t(0), t(-1))
+        );
         // Asks best (lowest) first.
-        assert_eq!(s.asks.iter().map(|l| l.price_level).collect::<Vec<_>>(), vec![600_000, 700_000]);
+        assert_eq!(
+            s.asks.iter().map(|l| l.price_level).collect::<Vec<_>>(),
+            vec![600_000, 700_000]
+        );
 
         h.send(level(0, 410_000, 3, 11, 2), 2);
         h.send(level(1, 410_000, 3, 11, 3), 3);
         let out = h.take();
         assert_eq!(out.len(), 1);
-        let Message::Update(u) = &out[0] else { panic!() };
-        assert_eq!((u.price_level, u.quantity, u.side, u.backtest_timestamp), (410_000, 3, Side::Buy, t(2)));
+        let Message::Update(u) = &out[0] else {
+            panic!()
+        };
+        assert_eq!(
+            (u.price_level, u.quantity, u.side, u.backtest_timestamp),
+            (410_000, 3, Side::Buy, t(2))
+        );
         h.send(level(0, 400_000, 0, 12, 4), 4);
         assert_eq!(h.bids(), vec![(410_000, 3)]);
     }
@@ -838,7 +950,9 @@ mod tests {
         let mut snap = Vec::new();
         h.p.snapshot_all(t(60_000), &mut snap).unwrap();
         assert_eq!(snap.len(), 1);
-        let Message::Snapshot(s) = &snap[0] else { panic!() };
+        let Message::Snapshot(s) = &snap[0] else {
+            panic!()
+        };
         assert_eq!((s.received_at, s.exchange_timestamp), (t(60_000), t(4)));
         assert_eq!(snapshot_bids(&snap[0]), vec![(400_000, 6)]);
     }
@@ -860,12 +974,22 @@ mod tests {
         assert_eq!((p.stats.snapshots, p.stats.updates), (1, 1));
 
         let mut reader = AlignedSbeReader::<OrderbookSchema>::open(file.path()).unwrap();
-        let Some(AnyMessage::Snapshot(s)) = reader.read_msg().unwrap() else { panic!("expected snapshot") };
+        let Some(AnyMessage::Snapshot(s)) = reader.read_msg().unwrap() else {
+            panic!("expected snapshot")
+        };
         let s = SnapshotDomain::try_from_decoder(s).unwrap();
-        assert_eq!((s.symbol.as_str(), s.bids.len(), s.asks.len(), s.received_at), ("M", 1, 2, t(0)));
-        let Some(AnyMessage::PriceLevelUpdate(u)) = reader.read_msg().unwrap() else { panic!("expected update") };
+        assert_eq!(
+            (s.symbol.as_str(), s.bids.len(), s.asks.len(), s.received_at),
+            ("M", 1, 2, t(0))
+        );
+        let Some(AnyMessage::PriceLevelUpdate(u)) = reader.read_msg().unwrap() else {
+            panic!("expected update")
+        };
         let u = PriceLevelUpdateDomain::try_from_decoder(u).unwrap();
-        assert_eq!((u.price_level, u.quantity, u.side, u.exchange_timestamp), (410_000, 3, Side::Buy, t(1)));
+        assert_eq!(
+            (u.price_level, u.quantity, u.side, u.exchange_timestamp),
+            (410_000, 3, Side::Buy, t(1))
+        );
         assert!(reader.read_msg().unwrap().is_none());
     }
 
@@ -890,7 +1014,13 @@ mod tests {
     #[test]
     fn next_minute_boundary() {
         let at = |s: &str| s.parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(next_minute(at("2026-01-01T00:00:59.999Z")), at("2026-01-01T00:01:00Z"));
-        assert_eq!(next_minute(at("2026-01-01T00:01:00Z")), at("2026-01-01T00:02:00Z"));
+        assert_eq!(
+            next_minute(at("2026-01-01T00:00:59.999Z")),
+            at("2026-01-01T00:01:00Z")
+        );
+        assert_eq!(
+            next_minute(at("2026-01-01T00:01:00Z")),
+            at("2026-01-01T00:02:00Z")
+        );
     }
 }

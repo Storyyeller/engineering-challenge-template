@@ -26,9 +26,31 @@ fn yes_level(side: messages::Side, price: Price) -> (Side, i64) {
 
 pub fn book_event(symbol: String, book: &Book, exchange_ts: Option<DateTime<Utc>>) -> Event {
     // Best first: the highest YES bid, and the lowest YES ask (= the highest NO bid).
-    let bids = book.yes.iter().rev().map(|(p, q)| Level { price: p.micros(), qty: q.micros() }).collect();
-    let asks = book.no.iter().rev().map(|(p, q)| Level { price: p.complement().micros(), qty: q.micros() }).collect();
-    Event::Book { symbol, bids, asks, clock: book.clock, exchange_ts }
+    let bids = book
+        .yes
+        .iter()
+        .rev()
+        .map(|(p, q)| Level {
+            price: p.micros(),
+            qty: q.micros(),
+        })
+        .collect();
+    let asks = book
+        .no
+        .iter()
+        .rev()
+        .map(|(p, q)| Level {
+            price: p.complement().micros(),
+            qty: q.micros(),
+        })
+        .collect();
+    Event::Book {
+        symbol,
+        bids,
+        asks,
+        clock: book.clock,
+        exchange_ts,
+    }
 }
 
 pub fn level_event(
@@ -40,7 +62,14 @@ pub fn level_event(
     exchange_ts: DateTime<Utc>,
 ) -> Event {
     let (side, price) = yes_level(side, price);
-    Event::Level { symbol, side, price, qty: qty.micros(), clock, exchange_ts }
+    Event::Level {
+        symbol,
+        side,
+        price,
+        qty: qty.micros(),
+        clock,
+        exchange_ts,
+    }
 }
 
 #[cfg(test)]
@@ -64,15 +93,43 @@ mod tests {
         book.no.insert(p("0.30"), q("2"));
         book.clock = 7;
         let t = from_ms(1_700_000_000_000).unwrap();
-        let Event::Book { bids, asks, clock, .. } = book_event("M".into(), &book, None) else { panic!() };
+        let Event::Book {
+            bids, asks, clock, ..
+        } = book_event("M".into(), &book, None)
+        else {
+            panic!()
+        };
         let prices = |l: &[Level]| l.iter().map(|l| (l.price, l.qty)).collect::<Vec<_>>();
-        assert_eq!(prices(&bids), vec![(420_000, 1_500_000), (400_000, 10_000_000)]);
-        assert_eq!(prices(&asks), vec![(450_000, 5_000_000), (700_000, 2_000_000)]);
+        assert_eq!(
+            prices(&bids),
+            vec![(420_000, 1_500_000), (400_000, 10_000_000)]
+        );
+        assert_eq!(
+            prices(&asks),
+            vec![(450_000, 5_000_000), (700_000, 2_000_000)]
+        );
         assert_eq!(clock, 7);
 
         let e = level_event("M".into(), messages::Side::No, p("0.55"), q("0"), 8, t);
-        assert!(matches!(e, Event::Level { side: Side::Sell, price: 450_000, qty: 0, clock: 8, .. }));
+        assert!(matches!(
+            e,
+            Event::Level {
+                side: Side::Sell,
+                price: 450_000,
+                qty: 0,
+                clock: 8,
+                ..
+            }
+        ));
         let e = level_event("M".into(), messages::Side::Yes, p("0.42"), q("3"), 9, t);
-        assert!(matches!(e, Event::Level { side: Side::Buy, price: 420_000, qty: 3_000_000, .. }));
+        assert!(matches!(
+            e,
+            Event::Level {
+                side: Side::Buy,
+                price: 420_000,
+                qty: 3_000_000,
+                ..
+            }
+        ));
     }
 }

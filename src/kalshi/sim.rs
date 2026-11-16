@@ -12,7 +12,9 @@ use crate::kalshi::book::{Book, Change};
 use crate::kalshi::discovery::{Filter, Universe};
 use crate::kalshi::messages::{Action, Command, CommandKind};
 use crate::kalshi::session::Session;
-use crate::kalshi::subscriptions::{COMMAND_TIMEOUT_MS, Effects, LIFECYCLE_CHANNEL, ORDERBOOK_CHANNEL};
+use crate::kalshi::subscriptions::{
+    COMMAND_TIMEOUT_MS, Effects, LIFECYCLE_CHANNEL, ORDERBOOK_CHANNEL,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -61,12 +63,20 @@ fn qty_str(q: i64) -> String {
 }
 
 fn levels_json(l: &Levels) -> Value {
-    l.iter().map(|(&p, &q)| json!([price_str(p), qty_str(q)])).collect()
+    l.iter()
+        .map(|(&p, &q)| json!([price_str(p), qty_str(q)]))
+        .collect()
 }
 
 /// What the client should have for a book, in its display format, for comparisons.
 fn render(b: &TrueBook) -> Vec<Vec<(String, String)>> {
-    b.iter().map(|l| l.iter().map(|(&p, &q)| (price_str(p), qty_str(q))).collect()).collect()
+    b.iter()
+        .map(|l| {
+            l.iter()
+                .map(|(&p, &q)| (price_str(p), qty_str(q)))
+                .collect()
+        })
+        .collect()
 }
 
 /// A message waiting to be delivered. `seq` is assigned at delivery, like the server does at send time.
@@ -137,7 +147,10 @@ impl Sim {
             removed: BTreeSet::new(),
             mirror: BTreeMap::new(),
             log: VecDeque::new(),
-            log_len: std::env::var("SIM_LOG").ok().and_then(|s| s.parse().ok()).unwrap_or(60),
+            log_len: std::env::var("SIM_LOG")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(60),
             commands_sent: 0,
         };
         for _ in 0..12 {
@@ -164,7 +177,10 @@ impl Sim {
         let mut book = TrueBook::default();
         for side in &mut book {
             for _ in 0..self.rng.below(4) {
-                side.insert(100 * (1 + self.rng.below(99) as u32), 100 * (1 + self.rng.below(50) as i64));
+                side.insert(
+                    100 * (1 + self.rng.below(99) as u32),
+                    100 * (1 + self.rng.below(50) as i64),
+                );
             }
         }
         self.books.insert(ticker.clone(), book);
@@ -177,14 +193,21 @@ impl Sim {
 
     fn lifecycle(&mut self, msg: Value) {
         if let Some(sid) = self.conn.lifecycle_sid {
-            self.conn.outbox.push_back(Out { sid: Some(sid), msg, truth: None, is_response: false });
+            self.conn.outbox.push_back(Out {
+                sid: Some(sid),
+                msg,
+                truth: None,
+                is_response: false,
+            });
         }
     }
 
     /// Change one level of an open market and send the delta to every subscription that has it.
     fn trade(&mut self) {
         let open: Vec<String> = self.open.iter().cloned().collect();
-        let Some(ticker) = self.rng.pick(&open).cloned() else { return };
+        let Some(ticker) = self.rng.pick(&open).cloned() else {
+            return;
+        };
         let side = self.rng.below(2) as usize;
         let price = 100 * (1 + self.rng.below(99) as u32);
         let book = self.books.get_mut(&ticker).unwrap();
@@ -207,20 +230,33 @@ impl Sim {
             if markets.contains(&ticker) {
                 let msg = json!({"type": "orderbook_delta", "msg": {"market_ticker": ticker, "clock": self.clock,
                     "side": side_name, "price_dollars": price_str(price), "delta_fp": qty_str(delta)}});
-                self.conn.outbox.push_back(Out { sid: Some(sid), msg, truth: Some((ticker.clone(), book.clone())), is_response: false });
+                self.conn.outbox.push_back(Out {
+                    sid: Some(sid),
+                    msg,
+                    truth: Some((ticker.clone(), book.clone())),
+                    is_response: false,
+                });
             }
         }
     }
 
     fn settle(&mut self) {
         let open: Vec<String> = self.open.iter().cloned().collect();
-        let Some(ticker) = self.rng.pick(&open).cloned() else { return };
+        let Some(ticker) = self.rng.pick(&open).cloned() else {
+            return;
+        };
         self.note(format!("exchange: settled {ticker}"));
         self.open.remove(&ticker);
         self.lifecycle(json!({"type": "market_lifecycle_v2", "msg": {"market_ticker": ticker, "event_type": "settled"}}));
         // Kalshi clears the book when a market closes.
         self.books.insert(ticker.clone(), TrueBook::default());
-        let subs: Vec<u64> = self.conn.subs.iter().filter(|(_, m)| m.contains(&ticker)).map(|(&s, _)| s).collect();
+        let subs: Vec<u64> = self
+            .conn
+            .subs
+            .iter()
+            .filter(|(_, m)| m.contains(&ticker))
+            .map(|(&s, _)| s)
+            .collect();
         for sid in subs {
             self.snapshot(sid, &ticker);
         }
@@ -238,12 +274,22 @@ impl Sim {
             body["no_dollars_fp"] = levels_json(&book[1]);
         }
         let msg = json!({"type": "orderbook_snapshot", "msg": body});
-        self.conn.outbox.push_back(Out { sid: Some(sid), msg, truth: Some((ticker.to_string(), book)), is_response: false });
+        self.conn.outbox.push_back(Out {
+            sid: Some(sid),
+            msg,
+            truth: Some((ticker.to_string(), book)),
+            is_response: false,
+        });
     }
 
     /// The REST listing: open markets in the series, plus one that can't be subscribed to.
     fn discover(&mut self) -> Effects {
-        let mut found: Vec<String> = self.open.iter().filter(|t| t.starts_with("S-")).cloned().collect();
+        let mut found: Vec<String> = self
+            .open
+            .iter()
+            .filter(|t| t.starts_with("S-"))
+            .cloned()
+            .collect();
         found.push(BAD_MARKET.to_string());
         found.retain(|t| !self.removed.contains(t));
         let listed: BTreeSet<String> = found.iter().cloned().collect();
@@ -255,16 +301,26 @@ impl Sim {
     // ---- server protocol ----
 
     fn respond(&mut self, sid: Option<u64>, msg: Value) {
-        self.conn.outbox.push_back(Out { sid, msg, truth: None, is_response: true });
+        self.conn.outbox.push_back(Out {
+            sid,
+            msg,
+            truth: None,
+            is_response: true,
+        });
     }
 
     /// The server drops an orderbook subscription, as Kalshi does when it can't keep up with one.
     fn drop_subscription(&mut self) {
         let sids: Vec<u64> = self.conn.subs.keys().copied().collect();
-        let Some(&sid) = self.rng.pick(&sids) else { return };
+        let Some(&sid) = self.rng.pick(&sids) else {
+            return;
+        };
         self.note(format!("server: drops sid {sid}"));
         self.conn.subs.remove(&sid);
-        self.respond(Some(sid), json!({"type": "error", "msg": {"code": 25, "msg": "Subscription buffer overflow"}}));
+        self.respond(
+            Some(sid),
+            json!({"type": "error", "msg": {"code": 25, "msg": "Subscription buffer overflow"}}),
+        );
     }
 
     fn error(&mut self, id: u64, code: i64) {
@@ -285,7 +341,10 @@ impl Sim {
         let mut responses_before = self.conn.outbox.len();
         let existing_sid = self.conn.subs.keys().next().copied();
         match &cmd.kind {
-            CommandKind::Subscribe { channels, market_tickers } => {
+            CommandKind::Subscribe {
+                channels,
+                market_tickers,
+            } => {
                 if channels.iter().any(|c| c == LIFECYCLE_CHANNEL) {
                     let sid = self.new_sid();
                     self.conn.lifecycle_sid = Some(sid);
@@ -296,8 +355,16 @@ impl Sim {
                     // Like Kalshi: one orderbook subscription per connection, so another subscribe is
                     // merged into it, with a plain `ok`.
                     let current = &self.conn.subs[&sid];
-                    let new: Vec<String> = market_tickers.iter().filter(|t| !current.contains(*t)).cloned().collect();
-                    self.conn.subs.get_mut(&sid).unwrap().extend(new.iter().cloned());
+                    let new: Vec<String> = market_tickers
+                        .iter()
+                        .filter(|t| !current.contains(*t))
+                        .cloned()
+                        .collect();
+                    self.conn
+                        .subs
+                        .get_mut(&sid)
+                        .unwrap()
+                        .extend(new.iter().cloned());
                     self.respond(Some(sid), json!({"id": cmd.id, "type": "ok", "msg": {}}));
                     for t in &new {
                         self.snapshot(sid, t);
@@ -305,14 +372,20 @@ impl Sim {
                 } else {
                     let sid = self.new_sid();
                     self.conn.orderbook_sid = Some(sid);
-                    self.conn.subs.insert(sid, market_tickers.iter().cloned().collect());
+                    self.conn
+                        .subs
+                        .insert(sid, market_tickers.iter().cloned().collect());
                     self.respond(None, json!({"id": cmd.id, "type": "subscribed", "msg": {"channel": ORDERBOOK_CHANNEL, "sid": sid}}));
                     for t in market_tickers {
                         self.snapshot(sid, t);
                     }
                 }
             }
-            CommandKind::UpdateSubscription { sid, market_tickers, action } => {
+            CommandKind::UpdateSubscription {
+                sid,
+                market_tickers,
+                action,
+            } => {
                 let sid = *sid;
                 let Some(current) = self.conn.subs.get(&sid).cloned() else {
                     self.error(cmd.id, ERR_UNKNOWN_SID);
@@ -321,11 +394,19 @@ impl Sim {
                 let ok = json!({"id": cmd.id, "type": "ok", "msg": {}});
                 match action {
                     Action::AddMarkets => {
-                        let new: Vec<String> = market_tickers.iter().filter(|t| !current.contains(*t)).cloned().collect();
+                        let new: Vec<String> = market_tickers
+                            .iter()
+                            .filter(|t| !current.contains(*t))
+                            .cloned()
+                            .collect();
                         if let Some(code) = self.reject(&new) {
                             self.error(cmd.id, code);
                         } else {
-                            self.conn.subs.get_mut(&sid).unwrap().extend(new.iter().cloned());
+                            self.conn
+                                .subs
+                                .get_mut(&sid)
+                                .unwrap()
+                                .extend(new.iter().cloned());
                             self.respond(Some(sid), ok);
                             for t in &new {
                                 self.snapshot(sid, t);
@@ -368,7 +449,10 @@ impl Sim {
 
     /// Why subscribing to `tickers` would fail.
     fn reject(&self, tickers: &[String]) -> Option<i64> {
-        tickers.iter().any(|t| !self.open.contains(t)).then_some(ERR_BAD_MARKET)
+        tickers
+            .iter()
+            .any(|t| !self.open.contains(t))
+            .then_some(ERR_BAD_MARKET)
     }
 
     fn new_sid(&mut self) -> u64 {
@@ -414,7 +498,9 @@ impl Sim {
 
     /// Deliver (or lose, or garble) the next message.
     fn deliver(&mut self) -> bool {
-        let Some(mut out) = self.conn.outbox.pop_front() else { return false };
+        let Some(mut out) = self.conn.outbox.pop_front() else {
+            return false;
+        };
         if let Some(sid) = out.sid {
             let seq = self.conn.seq.entry(sid).or_default();
             *seq += 1;
@@ -433,13 +519,20 @@ impl Sim {
         if self.faults && has_seq && self.rng.percent(2) {
             self.note(format!("garbled: {}", out.msg));
             let ticker = out.msg["msg"]["market_ticker"].clone();
-            out.msg["msg"] = if self.rng.percent(50) { json!({"market_ticker": ticker, "price_dollars": "9.0000"}) } else { json!({}) };
+            out.msg["msg"] = if self.rng.percent(50) {
+                json!({"market_ticker": ticker, "price_dollars": "9.0000"})
+            } else {
+                json!({})
+            };
         }
         if let Some(sid) = out.sid {
             self.conn.undetected_drop.remove(&sid);
         }
         self.note(format!("deliver: {}", out.msg));
-        let result = self.session.on_message(&out.msg, self.now).expect("session error");
+        let result = self
+            .session
+            .on_message(&out.msg, self.now)
+            .expect("session error");
         self.process(result);
         true
     }
@@ -468,7 +561,9 @@ impl Sim {
             }
             80..83 => self.create_market(true),
             83..85 => self.settle(),
-            85..89 => self.lifecycle(json!({"type": "event_lifecycle", "msg": {"event_ticker": "E"}})),
+            85..89 => {
+                self.lifecycle(json!({"type": "event_lifecycle", "msg": {"event_ticker": "E"}}))
+            }
             89..92 => {
                 let held = std::mem::take(&mut self.conn.held);
                 self.conn.outbox.extend(held);
@@ -488,7 +583,9 @@ impl Sim {
             if m.stale {
                 continue;
             }
-            let Some(sid) = self.conn.orderbook_sid else { panic!("{t}: client has a book, but there's no orderbook subscription") };
+            let Some(sid) = self.conn.orderbook_sid else {
+                panic!("{t}: client has a book, but there's no orderbook subscription")
+            };
             if self.conn.undetected_drop.contains(&sid) {
                 continue;
             }
@@ -497,7 +594,11 @@ impl Sim {
             };
             let client: Vec<Vec<(String, String)>> = [&m.book.yes, &m.book.no]
                 .iter()
-                .map(|l| l.iter().map(|(p, q)| (p.to_string(), q.to_string())).collect())
+                .map(|l| {
+                    l.iter()
+                        .map(|(p, q)| (p.to_string(), q.to_string()))
+                        .collect()
+                })
                 .collect();
             assert_eq!(client, render(truth), "{t}: book differs from exchange");
         }
@@ -521,8 +622,17 @@ impl Sim {
                     }
                 },
                 Change::Level { ticker, .. } if gone_again.contains(&ticker) => {}
-                Change::Level { ticker, side, price, qty, .. } => {
-                    let book = self.mirror.get_mut(&ticker).unwrap_or_else(|| panic!("{ticker}: level change without a book"));
+                Change::Level {
+                    ticker,
+                    side,
+                    price,
+                    qty,
+                    ..
+                } => {
+                    let book = self
+                        .mirror
+                        .get_mut(&ticker)
+                        .unwrap_or_else(|| panic!("{ticker}: level change without a book"));
                     let levels = match side {
                         crate::kalshi::messages::Side::Yes => &mut book.yes,
                         crate::kalshi::messages::Side::No => &mut book.no,
@@ -547,9 +657,15 @@ impl Sim {
             .filter(|(_, m)| !m.stale)
             .map(|(t, m)| (t, (&m.book.yes, &m.book.no)))
             .collect();
-        let mirrored: BTreeMap<&String, (&BTreeMap<_, _>, &BTreeMap<_, _>)> =
-            self.mirror.iter().map(|(t, b)| (t, (&b.yes, &b.no))).collect();
-        assert_eq!(mirrored, synced, "books rebuilt from changes differ from the session's");
+        let mirrored: BTreeMap<&String, (&BTreeMap<_, _>, &BTreeMap<_, _>)> = self
+            .mirror
+            .iter()
+            .map(|(t, b)| (t, (&b.yes, &b.no)))
+            .collect();
+        assert_eq!(
+            mirrored, synced,
+            "books rebuilt from changes differ from the session's"
+        );
     }
 
     /// No faults: everything should settle down.
@@ -578,27 +694,50 @@ impl Sim {
             self.tick(COMMAND_TIMEOUT_MS);
             while self.deliver() {}
         }
-        assert!(self.commands_sent - before <= 1, "still sending commands after calming down");
+        assert!(
+            self.commands_sent - before <= 1,
+            "still sending commands after calming down"
+        );
 
         let subs = &self.session.subs;
         let books = &self.session.books.markets;
-        for t in self.open.iter().filter(|t| t.starts_with("S-") && !self.removed.contains(*t)) {
-            assert!(subs.is_subscribed(t), "{t}: open and in the series, but not subscribed");
-            let m = books.get(t).unwrap_or_else(|| panic!("{t}: subscribed but no book"));
+        for t in self
+            .open
+            .iter()
+            .filter(|t| t.starts_with("S-") && !self.removed.contains(*t))
+        {
+            assert!(
+                subs.is_subscribed(t),
+                "{t}: open and in the series, but not subscribed"
+            );
+            let m = books
+                .get(t)
+                .unwrap_or_else(|| panic!("{t}: subscribed but no book"));
             assert!(!m.stale, "{t}: still stale");
         }
         assert!(!subs.is_subscribed(BAD_MARKET));
         let wanted: BTreeSet<&String> = subs.wanted().collect();
         for t in books.keys() {
-            assert!(wanted.contains(t), "{t}: book kept for a market we don't follow");
+            assert!(
+                wanted.contains(t),
+                "{t}: book kept for a market we don't follow"
+            );
         }
         // Every book matches the exchange now that everything's delivered.
         for (t, m) in books {
             let client: Vec<Vec<(String, String)>> = [&m.book.yes, &m.book.no]
                 .iter()
-                .map(|l| l.iter().map(|(p, q)| (p.to_string(), q.to_string())).collect())
+                .map(|l| {
+                    l.iter()
+                        .map(|(p, q)| (p.to_string(), q.to_string()))
+                        .collect()
+                })
                 .collect();
-            assert_eq!(client, render(&self.books[t]), "{t}: final book differs from exchange");
+            assert_eq!(
+                client,
+                render(&self.books[t]),
+                "{t}: final book differs from exchange"
+            );
         }
     }
 }
@@ -628,7 +767,10 @@ fn simulated_exchange() {
         run(seed.parse().expect("SIM_SEED must be a number"), 3000);
         return;
     }
-    let seeds: u64 = std::env::var("SIM_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+    let seeds: u64 = std::env::var("SIM_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30);
     for seed in 0..seeds {
         run(seed, 3000);
     }

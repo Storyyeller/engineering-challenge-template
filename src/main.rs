@@ -55,7 +55,9 @@ const START_STAGGER: Duration = Duration::from_millis(500);
 
 fn env_u64(name: &str, default: u64) -> Result<u64> {
     match std::env::var(name) {
-        Ok(v) => v.parse().with_context(|| format!("{name} must be a number, got {v:?}")),
+        Ok(v) => v
+            .parse()
+            .with_context(|| format!("{name} must be a number, got {v:?}")),
         Err(_) => Ok(default),
     }
 }
@@ -74,10 +76,17 @@ fn main() -> Result<()> {
 
     let key_id = std::env::var("KALSHI_API_KEY_ID").context("KALSHI_API_KEY_ID not set")?;
     check_key_id(&key_id)?;
-    let key_path = std::env::var("KALSHI_PRIVATE_KEY_PATH").context("KALSHI_PRIVATE_KEY_PATH not set")?;
+    let key_path =
+        std::env::var("KALSHI_PRIVATE_KEY_PATH").context("KALSHI_PRIVATE_KEY_PATH not set")?;
     let (host, rest_base) = match std::env::var("KALSHI_ENV").as_deref() {
-        Ok("prod") | Err(_) => ("external-api-ws.kalshi.com", "https://external-api.kalshi.com/trade-api/v2"),
-        Ok("demo") => ("external-api-ws.demo.kalshi.co", "https://external-api.demo.kalshi.co/trade-api/v2"),
+        Ok("prod") | Err(_) => (
+            "external-api-ws.kalshi.com",
+            "https://external-api.kalshi.com/trade-api/v2",
+        ),
+        Ok("demo") => (
+            "external-api-ws.demo.kalshi.co",
+            "https://external-api.demo.kalshi.co/trade-api/v2",
+        ),
         Ok(other) => bail!("KALSHI_ENV must be 'demo' or 'prod', got {other:?}"),
     };
     let idle_secs = env_u64("KALSHI_IDLE_TIMEOUT_SECS", 30)?;
@@ -118,7 +127,10 @@ fn main() -> Result<()> {
     let mut writer = AlignedSbeWriter::from_file(stdout, CHUNK_SIZE_64_MEBIBYTES)?;
 
     let auth_key = AuthKey::load(&key_path)?;
-    info!("loaded {} key; {shards} shard(s) x {replicas} replica(s)", auth_key.kind());
+    info!(
+        "loaded {} key; {shards} shard(s) x {replicas} replica(s)",
+        auth_key.kind()
+    );
     let cfg = Arc::new(Config {
         key_id,
         auth_key,
@@ -143,7 +155,13 @@ fn main() -> Result<()> {
             book_request_txs.push(tx);
             let worker = Worker {
                 source,
-                universe: Universe { filters: filters.clone(), shard: Shard { index: shard, count: shards } },
+                universe: Universe {
+                    filters: filters.clone(),
+                    shard: Shard {
+                        index: shard,
+                        count: shards,
+                    },
+                },
                 start_delay: START_STAGGER * source as u32,
                 recycle,
                 // Replicas of a shard take turns, so one of them is always connected.
@@ -158,7 +176,11 @@ fn main() -> Result<()> {
             };
             // Labels everything logged for this connection.
             let span = info_span!("conn", shard = shard + 1, replica = replica + 1);
-            let name = format!("shard {}/{shards} replica {}/{replicas}", shard + 1, replica + 1);
+            let name = format!(
+                "shard {}/{shards} replica {}/{replicas}",
+                shard + 1,
+                replica + 1
+            );
             workers.push((worker, links, span, name));
         }
     }
@@ -166,18 +188,25 @@ fn main() -> Result<()> {
     drop(events_tx);
     drop(rediscover_tx);
 
-    let publisher = std::thread::Builder::new().name("publisher".into()).spawn(move || {
-        let _span = info_span!("publisher").entered();
-        let request = |source: usize, symbol: String| {
-            let _ = book_request_txs[source].send(symbol);
-        };
-        let report = |p: &Publisher| {
-            info!("symbols={} in_sync={} {}", p.symbols(), p.followed(), p.stats);
-        };
-        let result = collector::run_publisher(events_rx, &mut writer, request, report);
-        drop(writer); // closes stdout
-        result
-    })?;
+    let publisher = std::thread::Builder::new()
+        .name("publisher".into())
+        .spawn(move || {
+            let _span = info_span!("publisher").entered();
+            let request = |source: usize, symbol: String| {
+                let _ = book_request_txs[source].send(symbol);
+            };
+            let report = |p: &Publisher| {
+                info!(
+                    "symbols={} in_sync={} {}",
+                    p.symbols(),
+                    p.followed(),
+                    p.stats
+                );
+            };
+            let result = collector::run_publisher(events_rx, &mut writer, request, report);
+            drop(writer); // closes stdout
+            result
+        })?;
 
     let runtime = tokio::runtime::Runtime::new()?;
     let collected: Result<()> = runtime.block_on(async move {
@@ -193,21 +222,30 @@ fn main() -> Result<()> {
             }
         });
 
-        let http = reqwest::Client::builder().timeout(Duration::from_secs(60)).build()?;
-        let discovery_task = tokio::spawn(discovery::run_discovery(
-            http,
-            rest_base,
-            filters,
-            Duration::from_secs(discovery_secs),
-            listed_tx,
-            rediscover_rx,
-            shutdown.clone(),
-        ).instrument(info_span!("discovery")));
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()?;
+        let discovery_task = tokio::spawn(
+            discovery::run_discovery(
+                http,
+                rest_base,
+                filters,
+                Duration::from_secs(discovery_secs),
+                listed_tx,
+                rediscover_rx,
+                shutdown.clone(),
+            )
+            .instrument(info_span!("discovery")),
+        );
 
         let mut connections = JoinSet::new();
         for (worker, links, span, name) in workers {
             let cfg = cfg.clone();
-            let run = async move { connection::run(cfg, worker, links).await.with_context(|| name) };
+            let run = async move {
+                connection::run(cfg, worker, links)
+                    .await
+                    .with_context(|| name)
+            };
             connections.spawn(run.instrument(span));
         }
         let mut result = Ok(());
@@ -227,7 +265,9 @@ fn main() -> Result<()> {
     // Background tasks (the ctrl-c listener) are dropped with the runtime.
     runtime.shutdown_timeout(Duration::from_secs(1));
 
-    let published = publisher.join().map_err(|_| anyhow::anyhow!("publisher thread panicked"))?;
+    let published = publisher
+        .join()
+        .map_err(|_| anyhow::anyhow!("publisher thread panicked"))?;
     match (collected, published) {
         // A publisher failure stops the connections too; it's the root cause.
         (_, Err(e)) => Err(e.context("publishing")),

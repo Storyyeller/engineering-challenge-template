@@ -15,11 +15,19 @@ fn parse_fixed(s: &str, decimals: u32) -> Option<i64> {
     };
     let (int, frac) = body.split_once('.').unwrap_or((body, ""));
     let all_digits = |x: &str| x.bytes().all(|b| b.is_ascii_digit());
-    if (int.is_empty() && frac.is_empty()) || !all_digits(int) || !all_digits(frac) || frac.len() > decimals as usize {
+    if (int.is_empty() && frac.is_empty())
+        || !all_digits(int)
+        || !all_digits(frac)
+        || frac.len() > decimals as usize
+    {
         return None;
     }
     let int_val: i64 = if int.is_empty() { 0 } else { int.parse().ok()? };
-    let frac_val: i64 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
+    let frac_val: i64 = if frac.is_empty() {
+        0
+    } else {
+        frac.parse().ok()?
+    };
     let scaled = int_val
         .checked_mul(10i64.pow(decimals))?
         .checked_add(frac_val * 10i64.pow(decimals - frac.len() as u32))?;
@@ -31,7 +39,12 @@ fn fmt_fixed(f: &mut fmt::Formatter<'_>, units: i64, decimals: u32) -> fmt::Resu
     let scale = 10u64.pow(decimals);
     let sign = if units < 0 { "-" } else { "" };
     let abs = units.unsigned_abs();
-    let s = format!("{sign}{}.{:0width$}", abs / scale, abs % scale, width = decimals as usize);
+    let s = format!(
+        "{sign}{}.{:0width$}",
+        abs / scale,
+        abs % scale,
+        width = decimals as usize
+    );
     f.pad(&s)
 }
 
@@ -80,7 +93,10 @@ impl FromStr for Price {
             .and_then(|v| u32::try_from(v).ok())
             .filter(|&v| v <= Self::SCALE)
             .map(Price)
-            .ok_or_else(|| ParseError { what: "price", input: s.to_string() })
+            .ok_or_else(|| ParseError {
+                what: "price",
+                input: s.to_string(),
+            })
     }
 }
 
@@ -108,7 +124,12 @@ impl Qty {
 impl FromStr for Qty {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, ParseError> {
-        parse_fixed(s, Self::DECIMALS).map(Qty).ok_or_else(|| ParseError { what: "quantity", input: s.to_string() })
+        parse_fixed(s, Self::DECIMALS)
+            .map(Qty)
+            .ok_or_else(|| ParseError {
+                what: "quantity",
+                input: s.to_string(),
+            })
     }
 }
 
@@ -184,7 +205,10 @@ mod tests {
         assert_eq!(p("0.55").complement(), p("0.45"));
         assert!(p("0.3") < p("0.31"));
         for bad in ["1.0001", "-0.01", "0.00001", "x"] {
-            assert_eq!(bad.parse::<Price>().unwrap_err().to_string(), format!("invalid price {bad:?}"));
+            assert_eq!(
+                bad.parse::<Price>().unwrap_err().to_string(),
+                format!("invalid price {bad:?}")
+            );
         }
     }
 
