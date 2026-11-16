@@ -28,12 +28,19 @@ impl AlignedSbeWriter {
     /// Create an [`AlignedSbeWriter`], writing to `path` with `chunk` chunk
     /// size. Clears the file at `path`, if it exists.
     pub fn create(path: impl AsRef<Path>, chunk: usize) -> anyhow::Result<Self> {
+        Self::from_file(File::create(path)?, chunk)
+    }
+
+    /// Create an [`AlignedSbeWriter`] writing to an open file (e.g. stdout), with `chunk` chunk
+    /// size. Writes go where the file's writes normally go: from its current position, or at the
+    /// end if it was opened for appending.
+    pub fn from_file(file: File, chunk: usize) -> anyhow::Result<Self> {
         anyhow::ensure!(
             chunk > HEADER_LENGTH,
             "chunk must leave room for SBE data and an SBE header"
         );
         Ok(Self {
-            file: File::create(path)?,
+            file,
             buf: Vec::with_capacity(chunk),
             chunk,
         })

@@ -1,1 +1,9 @@
 /target/
+
+# Secrets
+*.pem
+*.key
+.env
+
+# Collected output
+*.sbe
